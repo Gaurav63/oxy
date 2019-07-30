@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	b64 "encoding/base64"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -51,12 +52,14 @@ func (s *StickySession) GetBackend(req *http.Request, servers []*url.URL) (*url.
 
 	decodedCookieValue, _ := b64.StdEncoding.DecodeString(cookie.Value)
 	plainTextCookieValueBytes, _ := Decrypt(decodedCookieValue, cipherKeyByte)
+	fmt.Printf("plain Text URL: %s\n", string(plainTextCookieValueBytes))
 	serverURL, err := url.Parse(string(plainTextCookieValueBytes))
 	if err != nil {
 		return nil, false, err
 	}
 
 	if s.isBackendAlive(serverURL, servers) {
+		fmt.Printf("serverURL:%s\n", serverURL.String())
 		return serverURL, true, nil
 	}
 	return nil, false, nil

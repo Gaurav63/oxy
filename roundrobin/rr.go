@@ -124,6 +124,7 @@ func (r *RoundRobin) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	if !stuck {
 		url, err := r.NextServer()
 		if err != nil {
+			fmt.Printf("url:%x, error:%x \n", url, err)
 			r.errHandler.ServeHTTP(w, req, err)
 			return
 		}
