@@ -4,6 +4,7 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
+	b64 "encoding/base64"
 	"errors"
 	"io"
 	"net/http"
@@ -48,7 +49,8 @@ func (s *StickySession) GetBackend(req *http.Request, servers []*url.URL) (*url.
 		return nil, false, err
 	}
 
-	plainTextCookieValueBytes, _ := Decrypt([]byte(cookie.Value), cipherKeyByte)
+	decodedCookieValue, _ := b64.StdEncoding.DecodeString(cookie.Value)
+	plainTextCookieValueBytes, _ := Decrypt(decodedCookieValue, cipherKeyByte)
 	serverURL, err := url.Parse(string(plainTextCookieValueBytes))
 	if err != nil {
 		return nil, false, err
@@ -66,7 +68,7 @@ func (s *StickySession) StickBackend(backend *url.URL, w *http.ResponseWriter) {
 	cipherKeyByte := byte32([]byte(s.cipherKey))
 
 	encryptedCookieByte, _ := Encrypt([]byte(backend.String()), cipherKeyByte)
-	cookie := &http.Cookie{Name: s.cookieName, Value: string(encryptedCookieByte), Path: "/", HttpOnly: opt.HTTPOnly, Secure: opt.Secure}
+	cookie := &http.Cookie{Name: s.cookieName, Value: b64.StdEncoding.EncodeToString(encryptedCookieByte), Path: "/", HttpOnly: opt.HTTPOnly, Secure: opt.Secure}
 
 	http.SetCookie(*w, cookie)
 }
