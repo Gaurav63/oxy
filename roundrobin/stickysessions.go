@@ -1,16 +1,13 @@
 package roundrobin
 
 import (
-	"crypto/aes"
-	"crypto/cipher"
-	"crypto/rand"
 	b64 "encoding/base64"
-	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
-	"unsafe"
+
+	log "github.com/sirupsen/logrus"
+	"github.com/vulcand/oxy/encryption"
 )
 
 // StickySession is a mixin for load balancers that implements layer 7 (http cookie) session affinity
@@ -33,15 +30,14 @@ func NewStickySession(cookieName string, cipherKey string) *StickySession {
 
 // NewStickySessionWithOptions creates a new StickySession whilst allowing for options to
 // shape its affinity cookie such as "httpOnly" or "secure"
-func NewStickySessionWithOptions(cookieName string, options CookieOptions) *StickySession {
-	return &StickySession{cookieName: cookieName, options: options}
+func NewStickySessionWithOptions(cookieName string, cipherKey string, options CookieOptions) *StickySession {
+	return &StickySession{cookieName: cookieName, cipherKey: cipherKey, options: options}
 }
 
 // GetBackend returns the backend URL stored in the sticky cookie, iff the backend is still in the valid list of servers.
-func (s *StickySession) GetBackend(req *http.Request, servers []*url.URL) (*url.URL, bool, error) {
+func (s *StickySession) GetBackend(req *http.Request, servers []*url.URL, logger *log.Logger) (*url.URL, bool, error) {
 	cookie, err := req.Cookie(s.cookieName)
-	cipherKeyByte := byte32([]byte(s.cipherKey))
-
+	var plainTextCookie string
 	switch err {
 	case nil:
 	case http.ErrNoCookie:
@@ -50,10 +46,25 @@ func (s *StickySession) GetBackend(req *http.Request, servers []*url.URL) (*url.
 		return nil, false, err
 	}
 
-	decodedCookieValue, _ := b64.StdEncoding.DecodeString(cookie.Value)
-	plainTextCookieValueBytes, _ := Decrypt(decodedCookieValue, cipherKeyByte)
-	fmt.Printf("plain Text URL: %s\n", string(plainTextCookieValueBytes))
-	serverURL, err := url.Parse(string(plainTextCookieValueBytes))
+	if len(s.cipherKey) > 0 {
+		cipherKeyByte := encryption.Byte32([]byte(s.cipherKey))
+		decodedCookieValue, err := b64.StdEncoding.DecodeString(cookie.Value)
+		if err != nil {
+			logger.Errorf("vulcand/oxy/roundrobin/stickysessions: error when decoding base64: %v.", err)
+			return nil, false, err
+		}
+		plainTextCookieValueBytes, err := encryption.AESDecrypt(decodedCookieValue, cipherKeyByte)
+
+		if err != nil {
+			logger.Errorf("vulcand/oxy/roundrobin/stickysessions: error when decrypting cookie: %v.", err)
+			return nil, false, err
+		}
+
+		plainTextCookie = string(plainTextCookieValueBytes)
+	} else {
+		plainTextCookie = cookie.Value
+	}
+	serverURL, err := url.Parse(plainTextCookie)
 	if err != nil {
 		return nil, false, err
 	}
@@ -66,12 +77,24 @@ func (s *StickySession) GetBackend(req *http.Request, servers []*url.URL) (*url.
 }
 
 // StickBackend creates and sets the cookie
-func (s *StickySession) StickBackend(backend *url.URL, w *http.ResponseWriter) {
+func (s *StickySession) StickBackend(backend *url.URL, w *http.ResponseWriter, logger *log.Logger) {
 	opt := s.options
-	cipherKeyByte := byte32([]byte(s.cipherKey))
+	var cookie *http.Cookie
 
-	encryptedCookieByte, _ := Encrypt([]byte(backend.String()), cipherKeyByte)
-	cookie := &http.Cookie{Name: s.cookieName, Value: b64.StdEncoding.EncodeToString(encryptedCookieByte), Path: "/", HttpOnly: opt.HTTPOnly, Secure: opt.Secure}
+	if len(s.cipherKey) > 0 {
+		cipherKeyByte := encryption.Byte32([]byte(s.cipherKey))
+		encryptedCookieByte, err := encryption.AESEncrypt([]byte(backend.String()), cipherKeyByte)
+
+		if err != nil {
+			logger.Errorf("vulcand/oxy/roundrobin/stickysessions: error when encrypting cookie: %v. Fallback to plaintext cookie", err)
+			cookie = &http.Cookie{Name: s.cookieName, Value: backend.String(), Path: "/", HttpOnly: opt.HTTPOnly, Secure: opt.Secure}
+			s.cipherKey = ""
+		} else {
+			cookie = &http.Cookie{Name: s.cookieName, Value: b64.StdEncoding.EncodeToString(encryptedCookieByte), Path: "/", HttpOnly: opt.HTTPOnly, Secure: opt.Secure}
+		}
+	} else {
+		cookie = &http.Cookie{Name: s.cookieName, Value: backend.String(), Path: "/", HttpOnly: opt.HTTPOnly, Secure: opt.Secure}
+	}
 
 	http.SetCookie(*w, cookie)
 }
@@ -87,59 +110,4 @@ func (s *StickySession) isBackendAlive(needle *url.URL, haystack []*url.URL) boo
 		}
 	}
 	return false
-}
-
-func byte32(s []byte) (a *[32]byte) {
-	if len(a) <= len(s) {
-		a = (*[len(a)]byte)(unsafe.Pointer(&s[0]))
-	}
-	return a
-}
-
-// Encrypt encrypts data using 256-bit AES-GCM.  This both hides the content of
-// the data and provides a check that it hasn't been altered. Output takes the
-// form nonce|ciphertext|tag where '|' indicates concatenation.
-func Encrypt(plaintext []byte, key *[32]byte) (ciphertext []byte, err error) {
-	block, err := aes.NewCipher(key[:])
-	if err != nil {
-		return nil, err
-	}
-
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, err
-	}
-
-	nonce := make([]byte, gcm.NonceSize())
-	_, err = io.ReadFull(rand.Reader, nonce)
-	if err != nil {
-		return nil, err
-	}
-
-	return gcm.Seal(nonce, nonce, plaintext, nil), nil
-}
-
-// Decrypt decrypts data using 256-bit AES-GCM.  This both hides the content of
-// the data and provides a check that it hasn't been altered. Expects input
-// form nonce|ciphertext|tag where '|' indicates concatenation.
-func Decrypt(ciphertext []byte, key *[32]byte) (plaintext []byte, err error) {
-	block, err := aes.NewCipher(key[:])
-	if err != nil {
-		return nil, err
-	}
-
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, err
-	}
-
-	if len(ciphertext) < gcm.NonceSize() {
-		return nil, errors.New("malformed ciphertext")
-	}
-
-	return gcm.Open(nil,
-		ciphertext[:gcm.NonceSize()],
-		ciphertext[gcm.NonceSize():],
-		nil,
-	)
 }
