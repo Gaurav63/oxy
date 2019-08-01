@@ -49,3 +49,7 @@
 [[override]]
   branch = "master"
   name = "github.com/gravitational/trace"
+
+[[constraint]]
+  branch = "master"
+  name = "github.com/Gaurav63/security"

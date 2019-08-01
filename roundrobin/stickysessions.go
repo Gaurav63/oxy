@@ -6,8 +6,8 @@ import (
 	"net/http"
 	"net/url"
 
+	"github.com/Gaurav63/security/encryption"
 	log "github.com/sirupsen/logrus"
-	"github.com/vulcand/oxy/encryption"
 )
 
 // StickySession is a mixin for load balancers that implements layer 7 (http cookie) session affinity
