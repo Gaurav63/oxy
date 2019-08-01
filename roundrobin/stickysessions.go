@@ -21,6 +21,7 @@ type StickySession struct {
 type CookieOptions struct {
 	HTTPOnly bool
 	Secure   bool
+	MaxAge   int
 }
 
 // NewStickySession creates a new StickySession
@@ -90,10 +91,10 @@ func (s *StickySession) StickBackend(backend *url.URL, w *http.ResponseWriter, l
 			cookie = &http.Cookie{Name: s.cookieName, Value: backend.String(), Path: "/", HttpOnly: opt.HTTPOnly, Secure: opt.Secure}
 			s.cipherKey = ""
 		} else {
-			cookie = &http.Cookie{Name: s.cookieName, Value: b64.StdEncoding.EncodeToString(encryptedCookieByte), Path: "/", HttpOnly: opt.HTTPOnly, Secure: opt.Secure}
+			cookie = &http.Cookie{Name: s.cookieName, Value: b64.StdEncoding.EncodeToString(encryptedCookieByte), Path: "/", HttpOnly: opt.HTTPOnly, Secure: opt.Secure, MaxAge: opt.MaxAge}
 		}
 	} else {
-		cookie = &http.Cookie{Name: s.cookieName, Value: backend.String(), Path: "/", HttpOnly: opt.HTTPOnly, Secure: opt.Secure}
+		cookie = &http.Cookie{Name: s.cookieName, Value: backend.String(), Path: "/", HttpOnly: opt.HTTPOnly, Secure: opt.Secure, MaxAge: opt.MaxAge}
 	}
 
 	http.SetCookie(*w, cookie)
