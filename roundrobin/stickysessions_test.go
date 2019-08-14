@@ -6,6 +6,10 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/Gaurav63/security/encryption"
+
+	b64 "encoding/base64"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/vulcand/oxy/forward"
@@ -22,7 +26,7 @@ func TestBasic(t *testing.T) {
 	fwd, err := forward.New()
 	require.NoError(t, err)
 
-	sticky := NewStickySession("test")
+	sticky := NewStickySession("test", "")
 	require.NotNil(t, sticky)
 
 	lb, err := New(fwd, EnableStickySession(sticky))
@@ -64,7 +68,7 @@ func TestStickCookie(t *testing.T) {
 	fwd, err := forward.New()
 	require.NoError(t, err)
 
-	sticky := NewStickySession("test")
+	sticky := NewStickySession("test", "")
 	require.NotNil(t, sticky)
 
 	lb, err := New(fwd, EnableStickySession(sticky))
@@ -97,7 +101,7 @@ func TestStickCookieWithOptions(t *testing.T) {
 	require.NoError(t, err)
 
 	options := CookieOptions{HTTPOnly: true, Secure: true}
-	sticky := NewStickySessionWithOptions("test", options)
+	sticky := NewStickySessionWithOptions("test", "", options)
 	require.NotNil(t, sticky)
 
 	lb, err := New(fwd, EnableStickySession(sticky))
@@ -131,7 +135,7 @@ func TestRemoveRespondingServer(t *testing.T) {
 	fwd, err := forward.New()
 	require.NoError(t, err)
 
-	sticky := NewStickySession("test")
+	sticky := NewStickySession("test", "")
 	require.NotNil(t, sticky)
 
 	lb, err := New(fwd, EnableStickySession(sticky))
@@ -201,7 +205,7 @@ func TestRemoveAllServers(t *testing.T) {
 	fwd, err := forward.New()
 	require.NoError(t, err)
 
-	sticky := NewStickySession("test")
+	sticky := NewStickySession("test", "")
 	require.NotNil(t, sticky)
 
 	lb, err := New(fwd, EnableStickySession(sticky))
@@ -254,7 +258,7 @@ func TestBadCookieVal(t *testing.T) {
 	fwd, err := forward.New()
 	require.NoError(t, err)
 
-	sticky := NewStickySession("test")
+	sticky := NewStickySession("test", "")
 	require.NotNil(t, sticky)
 
 	lb, err := New(fwd, EnableStickySession(sticky))
@@ -289,4 +293,46 @@ func TestBadCookieVal(t *testing.T) {
 	_, err = ioutil.ReadAll(resp.Body)
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusInternalServerError, resp.StatusCode)
+}
+
+func TestStickCookieWithCipherKey(t *testing.T) {
+	a := testutils.NewResponder("a")
+	b := testutils.NewResponder("b")
+
+	defer a.Close()
+	defer b.Close()
+
+	fwd, err := forward.New()
+	require.NoError(t, err)
+	cipherKey := "uZw3RFyxG2GlNxagu0VOiGFK4FUbGkFG"
+	sticky := NewStickySession("test", cipherKey)
+	require.NotNil(t, sticky)
+
+	lb, err := New(fwd, EnableStickySession(sticky))
+	require.NoError(t, err)
+
+	err = lb.UpsertServer(testutils.ParseURI(a.URL))
+	require.NoError(t, err)
+	err = lb.UpsertServer(testutils.ParseURI(b.URL))
+	require.NoError(t, err)
+
+	proxy := httptest.NewServer(lb)
+	defer proxy.Close()
+
+	resp, err := http.Get(proxy.URL)
+	require.NoError(t, err)
+
+	cookie := resp.Cookies()[0]
+	assert.Equal(t, "test", cookie.Name)
+
+	cipherKeyBytes := encryption.Byte32([]byte(cipherKey))
+	decodeCipherCookieValue, err := b64.RawStdEncoding.DecodeString(cookie.Value)
+	if err != nil {
+		t.Fatalf("error while decoding Raw base64 cookie value: %v", err)
+	}
+	plainTextCookieValueBytes, err := encryption.AESDecrypt(decodeCipherCookieValue, cipherKeyBytes)
+	if err != nil {
+		t.Fatalf("error while decrypting cookie value: %v", err)
+	}
+	assert.Equal(t, a.URL, string(plainTextCookieValueBytes))
 }

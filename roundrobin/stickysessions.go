@@ -2,7 +2,6 @@ package roundrobin
 
 import (
 	b64 "encoding/base64"
-	"fmt"
 	"net/http"
 	"net/url"
 
@@ -36,7 +35,7 @@ func NewStickySessionWithOptions(cookieName string, cipherKey string, options Co
 }
 
 // GetBackend returns the backend URL stored in the sticky cookie, iff the backend is still in the valid list of servers.
-func (s *StickySession) GetBackend(req *http.Request, servers []*url.URL, logger *log.Logger) (*url.URL, bool, error) {
+func (s *StickySession) GetBackend(req *http.Request, w *http.ResponseWriter, servers []*url.URL, logger *log.Logger) (*url.URL, bool, error) {
 	cookie, err := req.Cookie(s.cookieName)
 	var plainTextCookie string
 	switch err {
@@ -49,7 +48,7 @@ func (s *StickySession) GetBackend(req *http.Request, servers []*url.URL, logger
 
 	if len(s.cipherKey) > 0 {
 		cipherKeyByte := encryption.Byte32([]byte(s.cipherKey))
-		decodedCookieValue, err := b64.StdEncoding.DecodeString(cookie.Value)
+		decodedCookieValue, err := b64.RawStdEncoding.DecodeString(cookie.Value)
 		if err != nil {
 			logger.Errorf("vulcand/oxy/roundrobin/stickysessions: error when decoding base64: %v.", err)
 			return nil, false, err
@@ -71,7 +70,10 @@ func (s *StickySession) GetBackend(req *http.Request, servers []*url.URL, logger
 	}
 
 	if s.isBackendAlive(serverURL, servers) {
-		fmt.Printf("serverURL:%s\n", serverURL.String())
+		logger.Debugf("vulcand/oxy/roundrobin/stickysessions: serverURL:%s", serverURL.String())
+		// The cookie is recreated so that subsequent calls will go to same backend.
+		cookie.MaxAge = s.options.MaxAge
+		http.SetCookie(*w, cookie)
 		return serverURL, true, nil
 	}
 	return nil, false, nil
@@ -91,7 +93,7 @@ func (s *StickySession) StickBackend(backend *url.URL, w *http.ResponseWriter, l
 			cookie = &http.Cookie{Name: s.cookieName, Value: backend.String(), Path: "/", HttpOnly: opt.HTTPOnly, Secure: opt.Secure}
 			s.cipherKey = ""
 		} else {
-			cookie = &http.Cookie{Name: s.cookieName, Value: b64.StdEncoding.EncodeToString(encryptedCookieByte), Path: "/", HttpOnly: opt.HTTPOnly, Secure: opt.Secure, MaxAge: opt.MaxAge}
+			cookie = &http.Cookie{Name: s.cookieName, Value: b64.RawStdEncoding.EncodeToString(encryptedCookieByte), Path: "/", HttpOnly: opt.HTTPOnly, Secure: opt.Secure, MaxAge: opt.MaxAge}
 		}
 	} else {
 		cookie = &http.Cookie{Name: s.cookieName, Value: backend.String(), Path: "/", HttpOnly: opt.HTTPOnly, Secure: opt.Secure, MaxAge: opt.MaxAge}

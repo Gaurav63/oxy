@@ -177,7 +177,7 @@ func (rb *Rebalancer) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	stuck := false
 
 	if rb.stickySession != nil {
-		cookieURL, present, err := rb.stickySession.GetBackend(&newReq, rb.Servers(), rb.log)
+		cookieURL, present, err := rb.stickySession.GetBackend(&newReq, &w, rb.Servers(), rb.log)
 
 		if err != nil {
 			log.Warnf("vulcand/oxy/roundrobin/rebalancer: error using server from cookie: %v", err)

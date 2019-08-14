@@ -385,7 +385,7 @@ func TestRebalancerStickySession(t *testing.T) {
 	defer b.Close()
 	defer x.Close()
 
-	sticky := NewStickySession("test")
+	sticky := NewStickySession("test", "")
 	require.NotNil(t, sticky)
 
 	fwd, err := forward.New()

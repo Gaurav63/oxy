@@ -109,7 +109,7 @@ func (r *RoundRobin) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	newReq := *req
 	stuck := false
 	if r.stickySession != nil {
-		cookieURL, present, err := r.stickySession.GetBackend(&newReq, r.Servers(), r.log)
+		cookieURL, present, err := r.stickySession.GetBackend(&newReq, &w, r.Servers(), r.log)
 
 		if err != nil {
 			log.Warnf("vulcand/oxy/roundrobin/rr: error using server from cookie: %v", err)
